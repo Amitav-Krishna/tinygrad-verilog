@@ -35,9 +35,13 @@ test_relu: $(BUILD)
 	$(IVERILOG) -o $(BUILD)/relu.vvp $(SRC)/relu.v $(TEST)/tb_relu.v
 	$(VVP) $(BUILD)/relu.vvp
 
+# Test activation
+test_activation: $(BUILD)
+	$(IVERILOG) -o $(BUILD)/activation.vvp $(SRC)/fixed_mul.v $(SRC)/mac.v $(SRC)/relu.v $(SRC)/activation.v $(TEST)/tb_activation.v
+	$(VVP) $(BUILD)/activation.vvp
 # Test neuron
 test_neuron: $(BUILD)
-	$(IVERILOG) -o $(BUILD)/neuron.vvp $(SRC)/fixed_mul.v $(SRC)/mac.v $(SRC)/relu.v $(SRC)/neuron.v $(TEST)/tb_neuron.v
+	$(IVERILOG) -o $(BUILD)/neuron.vvp $(SRC)/activation.v $(SRC)/fixed_mul.v $(SRC)/mac.v $(SRC)/relu.v $(SRC)/neuron.v $(TEST)/tb_neuron.v
 	$(VVP) $(BUILD)/neuron.vvp
 
 # Test full network
