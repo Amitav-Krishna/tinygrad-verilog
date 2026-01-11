@@ -28,7 +28,7 @@ module tb_mac;
         .done(done)
     );
 
-    // Clock generation: 10ns period
+    // Clock generation: 5ns period
     always #5 clk = ~clk;
 
     // Helper functions
