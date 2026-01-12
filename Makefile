@@ -43,7 +43,9 @@ test_activation: $(BUILD)
 test_neuron: $(BUILD)
 	$(IVERILOG) -o $(BUILD)/neuron.vvp $(SRC)/activation.v $(SRC)/fixed_mul.v $(SRC)/mac.v $(SRC)/relu.v $(SRC)/neuron.v $(TEST)/tb_neuron.v
 	$(VVP) $(BUILD)/neuron.vvp
-
+test_layer: $(BUILD)
+	$(IVERILOG) -o $(BUILD)/layer.vvp $(SRC)/layer.v $(SRC)/activation.v $(SRC)/fixed_mul.v $(SRC)/mac.v $(SRC)/relu.v $(SRC)/neuron.v $(TEST)/tb_layer.v
+	$(VVP) $(BUILD)/layer.vvp
 # Test full network
 test_network: $(BUILD)
 	$(IVERILOG) -o $(BUILD)/network.vvp $(SRC)/*.v $(TEST)/tb_network.v
