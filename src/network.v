@@ -2,19 +2,20 @@ module network #(
 		 parameter N = 4,
 		 parameter M = 4
 		 ) (
-		    input wire clk,
-		    input wire start,
-		    input wire signed [(N*16)-1:0] x,
+		    input wire				   clk,
+		    input wire				   start,
+		    input wire signed [(N*16)-1:0]	   x,
 		    input wire signed [((M*(N*N))*16)-1:0] w,
-		    input wire signed [((N*M)*16)-1:0] b,
-		    output wire signed [(N*16)-1:0] y,
-		    output wire done
+		    input wire signed [((N*M)*16)-1:0]	   b,
+		    output wire signed [(N*16)-1:0]	   y,
+		    output wire signed [(((M+1)*N)*16)-1:0] intermediate_states,
+		    output wire				   done
 		    );
    reg [$clog2(M+1)-1:0]	count;
-   wire signed [(((M+1)*N)*16)-1:0]	intermediate_states;
-   wire [(M-1):0]				intermediate_done;
-   wire [(M-1):0]				intermediate_start;
-	      
+
+   wire [(M-1):0]		intermediate_done;
+   wire [(M-1):0]		intermediate_start;
+   
    genvar			i;
 
    assign intermediate_states[(N*16)-1:0] = x;
@@ -49,9 +50,9 @@ module network #(
    endgenerate
 
 endmodule 
-      
 
-   
-   
-   
-   
+
+
+
+
+
