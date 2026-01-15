@@ -1,30 +1,30 @@
 module layer #(
-		parameter N = 4,
-		parameter M = 4
+		parameter N_IN  = 4,  // number of inputs
+		parameter N_OUT = 4   // number of neurons (outputs)
 	       ) (
 		   input wire		      clk,
 		   input wire		      start,
-		   input wire signed [(N*16)-1:0]     x,
-		   input wire signed [((M*N)*16)-1:0] w,
-		   input wire signed [(M*16)-1:0]  b,
-		   output wire signed [(M*16)-1:0] y,
+		   input wire signed [(N_IN*16)-1:0]      x,
+		   input wire signed [((N_OUT*N_IN)*16)-1:0] w,
+		   input wire signed [(N_OUT*16)-1:0]  b,
+		   output wire signed [(N_OUT*16)-1:0] y,
 		   output wire done
 		  );
-   reg [$clog2(N+1)-1:0] count; 
-   wire signed [(M*16)-1:0] activations;
+   reg [$clog2(N_IN+1)-1:0] count;
+   wire signed [(N_OUT*16)-1:0] activations;
    reg signed [15:0]	    x_val;
-   reg signed [(M*16)-1:0] w_vals;
+   reg signed [(N_OUT*16)-1:0] w_vals;
    reg start_delayed;
    
    genvar	    i;
 
    assign y = activations;
 
-   wire [M-1:0] neurons_done;
-   
+   wire [N_OUT-1:0] neurons_done;
+
    generate
-      for (i = 0; i < M; i = i + 1) begin
-	 neuron #(.N(N)) neuron_inst (
+      for (i = 0; i < N_OUT; i = i + 1) begin : neurons
+	 neuron #(.N(N_IN)) neuron_inst (
 				      .clk(clk),
 				      .start(start_delayed),
 				      .x(x_val),
@@ -46,11 +46,11 @@ module layer #(
       if (start) begin
  	 count <= 0;
  	 x_val <= x[0 +: 16];
- 	 w_vals <= w[0 +: (M*16)];
-      end else if (count < N - 1) begin
+ 	 w_vals <= w[0 +: (N_OUT*16)];
+      end else if (count < N_IN - 1) begin
  	 count <= count + 1;
  	 x_val <= x[(((count + 1) * 16)) +: 16];
- 	 w_vals <= w[(((count + 1) * M * 16)) +: (M*16)];
+ 	 w_vals <= w[(((count + 1) * N_OUT * 16)) +: (N_OUT*16)];
       end
    end
 	 

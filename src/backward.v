@@ -1,220 +1,314 @@
+// Backward pass with heterogeneous layer support
 module backward #(
-		  parameter N = 4,
-		  parameter M = 4
-		  ) (
-		     input wire clk,
-		     input wire rst,
-		     input wire start,
-		     input wire signed [(((M+1)*N)*16)-1:0] activations,
-		     input wire signed [((M*(N*N))*16)-1:0] w,
-		     input wire signed [(N*16)-1:0] dL_dy,
-		     output reg signed [((M*(N*N))*16)-1:0] dL_dw,
-		     output reg signed [((N*M)*16)-1:0] dL_db,
-		     output reg done
-		     );
+    parameter MAX_LAYERS = 8,
+    parameter NUM_LAYERS = 2,
+    parameter [(MAX_LAYERS+1)*16-1:0] LAYER_SIZES = {16'd0, 16'd0, 16'd0, 16'd0, 16'd0, 16'd0, 16'd1, 16'd3, 16'd2}
+) (
+    input wire clk,
+    input wire rst,
+    input wire start,
+    input wire signed [(TOTAL_ACTS*16)-1:0] activations,
+    input wire signed [(TOTAL_WEIGHTS*16)-1:0] w,
+    input wire signed [(L_OUT*16)-1:0] dL_dy,
+    output reg signed [(TOTAL_WEIGHTS*16)-1:0] dL_dw,
+    output reg signed [(TOTAL_BIASES*16)-1:0] dL_db,
+    output reg done
+);
 
-   // State encoding
-   localparam IDLE        = 4'd0;
-   localparam INIT_DZ     = 4'd1;  // initialize counter for COMPUTE_DZ
-   localparam COMPUTE_DZ  = 4'd2;  // dL_dz = dL_da ⊙ ReLU'(act)
-   localparam INIT_DW     = 4'd3;  // initialize counters for COMPUTE_DW
-   localparam COMPUTE_DW  = 4'd4;  // dL_dW = dL_dz × a_prev^T
-   localparam INIT_DA     = 4'd5;  // initialize counters for COMPUTE_DA
-   localparam COMPUTE_DA  = 4'd6;  // dL_da_prev = W^T × dL_dz
-   localparam STORE_DA    = 4'd7;  // store accumulated result
-   localparam NEXT_LAYER  = 4'd8;  // decrement layer, loop or finish
-   localparam DONE_STATE  = 4'd9;
+    // Extract layer sizes as localparams
+    localparam L0 = LAYER_SIZES[0*16 +: 16];
+    localparam L1 = LAYER_SIZES[1*16 +: 16];
+    localparam L2 = LAYER_SIZES[2*16 +: 16];
+    localparam L3 = LAYER_SIZES[3*16 +: 16];
+    localparam L4 = LAYER_SIZES[4*16 +: 16];
+    localparam L5 = LAYER_SIZES[5*16 +: 16];
+    localparam L6 = LAYER_SIZES[6*16 +: 16];
+    localparam L7 = LAYER_SIZES[7*16 +: 16];
+    localparam L8 = LAYER_SIZES[8*16 +: 16];
 
-   reg [3:0]  state;
-   reg [$clog2(M)-1:0] layer_idx;  // current layer: M-1 down to 0
+    localparam L_OUT = (NUM_LAYERS == 1) ? L1 :
+                       (NUM_LAYERS == 2) ? L2 :
+                       (NUM_LAYERS == 3) ? L3 :
+                       (NUM_LAYERS == 4) ? L4 :
+                       (NUM_LAYERS == 5) ? L5 :
+                       (NUM_LAYERS == 6) ? L6 :
+                       (NUM_LAYERS == 7) ? L7 :
+                       (NUM_LAYERS == 8) ? L8 : 0;
 
-   // Working registers
-   reg signed [(N*16)-1:0] dL_da;      // gradient w.r.t. current layer activation
-   reg signed [(N*16)-1:0] dL_dz;      // gradient w.r.t. pre-activation
-   reg signed [(N*16)-1:0] dL_da_prev; // gradient to pass to next iteration
+    // Weight counts per layer
+    localparam W0 = L1 * L0;
+    localparam W1 = L2 * L1;
+    localparam W2 = L3 * L2;
+    localparam W3 = L4 * L3;
+    localparam W4 = L5 * L4;
+    localparam W5 = L6 * L5;
+    localparam W6 = L7 * L6;
+    localparam W7 = L8 * L7;
 
-   // For matrix/vector operations within each state
-   reg [$clog2(N):0]	   i, j;  // extra bit to handle N as terminal value
+    localparam TOTAL_WEIGHTS =
+        ((NUM_LAYERS > 0) ? W0 : 0) + ((NUM_LAYERS > 1) ? W1 : 0) +
+        ((NUM_LAYERS > 2) ? W2 : 0) + ((NUM_LAYERS > 3) ? W3 : 0) +
+        ((NUM_LAYERS > 4) ? W4 : 0) + ((NUM_LAYERS > 5) ? W5 : 0) +
+        ((NUM_LAYERS > 6) ? W6 : 0) + ((NUM_LAYERS > 7) ? W7 : 0);
 
-   // Helper wires for indexing into activations
-   // activations layout: [input (N)][layer0 out (N)][layer1 out (N)]...[layerM-1 out (N)]
-   // layer_idx output is at activations[(layer_idx+1)*N + i]
-   wire [31:0]		   act_idx;
-   wire signed [15:0]	   act_val;
-   assign act_idx = ((layer_idx + 1) * N + i) * 16;
-   assign act_val = activations[act_idx +: 16];
+    localparam WO0 = 0;
+    localparam WO1 = W0;
+    localparam WO2 = W0 + W1;
+    localparam WO3 = W0 + W1 + W2;
+    localparam WO4 = W0 + W1 + W2 + W3;
+    localparam WO5 = W0 + W1 + W2 + W3 + W4;
+    localparam WO6 = W0 + W1 + W2 + W3 + W4 + W5;
+    localparam WO7 = W0 + W1 + W2 + W3 + W4 + W5 + W6;
 
-   // Helper for dL_da element access
-   wire signed [15:0] dL_da_i;
-   assign dL_da_i = dL_da[i*16 +: 16];
+    localparam TOTAL_BIASES =
+        ((NUM_LAYERS > 0) ? L1 : 0) + ((NUM_LAYERS > 1) ? L2 : 0) +
+        ((NUM_LAYERS > 2) ? L3 : 0) + ((NUM_LAYERS > 3) ? L4 : 0) +
+        ((NUM_LAYERS > 4) ? L5 : 0) + ((NUM_LAYERS > 5) ? L6 : 0) +
+        ((NUM_LAYERS > 6) ? L7 : 0) + ((NUM_LAYERS > 7) ? L8 : 0);
 
-   // Helper for dL_db indexing: dL_db layout is [layer0 (N)][layer1 (N)]...[layerM-1 (N)]
-   wire [31:0] db_idx;
-   assign db_idx = (layer_idx * N + i) * 16;
+    localparam BO0 = 0;
+    localparam BO1 = L1;
+    localparam BO2 = L1 + L2;
+    localparam BO3 = L1 + L2 + L3;
+    localparam BO4 = L1 + L2 + L3 + L4;
+    localparam BO5 = L1 + L2 + L3 + L4 + L5;
+    localparam BO6 = L1 + L2 + L3 + L4 + L5 + L6;
+    localparam BO7 = L1 + L2 + L3 + L4 + L5 + L6 + L7;
 
-   // Helper for a_prev (input to current layer) = activations[layer_idx]
-   // a_prev[j] is at activations[layer_idx * N + j]
-   wire [31:0] a_prev_idx;
-   wire signed [15:0] a_prev_j;
-   assign a_prev_idx = (layer_idx * N + j) * 16;
-   assign a_prev_j = activations[a_prev_idx +: 16];
+    localparam TOTAL_ACTS = L0 +
+        ((NUM_LAYERS > 0) ? L1 : 0) + ((NUM_LAYERS > 1) ? L2 : 0) +
+        ((NUM_LAYERS > 2) ? L3 : 0) + ((NUM_LAYERS > 3) ? L4 : 0) +
+        ((NUM_LAYERS > 4) ? L5 : 0) + ((NUM_LAYERS > 5) ? L6 : 0) +
+        ((NUM_LAYERS > 6) ? L7 : 0) + ((NUM_LAYERS > 7) ? L8 : 0);
 
-   // Helper for dL_dz[i] access
-   wire signed [15:0] dL_dz_i;
-   assign dL_dz_i = dL_dz[i*16 +: 16];
+    localparam AO0 = 0;
+    localparam AO1 = L0;
+    localparam AO2 = L0 + L1;
+    localparam AO3 = L0 + L1 + L2;
+    localparam AO4 = L0 + L1 + L2 + L3;
+    localparam AO5 = L0 + L1 + L2 + L3 + L4;
+    localparam AO6 = L0 + L1 + L2 + L3 + L4 + L5;
+    localparam AO7 = L0 + L1 + L2 + L3 + L4 + L5 + L6;
+    localparam AO8 = L0 + L1 + L2 + L3 + L4 + L5 + L6 + L7;
 
-   // Helper for dL_dw indexing: dL_dw layout is [layer0 (N×N)][layer1 (N×N)]...
-   // Weight [i][j] of layer_idx is at: (layer_idx * N * N + i * N + j)
-   wire [31:0] dw_idx;
-   assign dw_idx = (layer_idx * N * N + i * N + j) * 16;
+    // Max layer size for register sizing
+    localparam MAX_L = (L0 > L1 ? L0 : L1) > (L2 > L3 ? L2 : L3) ?
+                       (L0 > L1 ? L0 : L1) : (L2 > L3 ? L2 : L3);
 
-   // Fixed-point multiplier result (Q8.8 × Q8.8 = Q16.16, take middle 16 bits)
-   wire signed [31:0] mult_result;
-   assign mult_result = dL_dz_i * a_prev_j;
-   wire signed [15:0] mult_q8_8;
-   assign mult_q8_8 = mult_result[23:8];  // extract Q8.8 from Q16.16
+    // Runtime lookup functions (synthesizable)
+    function [15:0] get_L;
+        input [3:0] idx;
+        begin
+            case (idx)
+                0: get_L = L0; 1: get_L = L1; 2: get_L = L2; 3: get_L = L3;
+                4: get_L = L4; 5: get_L = L5; 6: get_L = L6; 7: get_L = L7;
+                default: get_L = L8;
+            endcase
+        end
+    endfunction
 
-   // Helper for W[layer_idx][i][j] access (same indexing as dw_idx)
-   // W[i][j] is at: (layer_idx * N * N + i * N + j)
-   wire [31:0] w_idx;
-   wire signed [15:0] w_ij;
-   assign w_idx = (layer_idx * N * N + i * N + j) * 16;
-   assign w_ij = w[w_idx +: 16];
+    function [31:0] get_WO;
+        input [3:0] idx;
+        begin
+            case (idx)
+                0: get_WO = WO0; 1: get_WO = WO1; 2: get_WO = WO2; 3: get_WO = WO3;
+                4: get_WO = WO4; 5: get_WO = WO5; 6: get_WO = WO6; default: get_WO = WO7;
+            endcase
+        end
+    endfunction
 
-   // Multiplier for W^T × dL_dz: W[i][j] * dL_dz[i]
-   wire signed [31:0] mult_da_result;
-   assign mult_da_result = w_ij * dL_dz_i;
-   wire signed [15:0] mult_da_q8_8;
-   assign mult_da_q8_8 = mult_da_result[23:8];
+    function [31:0] get_BO;
+        input [3:0] idx;
+        begin
+            case (idx)
+                0: get_BO = BO0; 1: get_BO = BO1; 2: get_BO = BO2; 3: get_BO = BO3;
+                4: get_BO = BO4; 5: get_BO = BO5; 6: get_BO = BO6; default: get_BO = BO7;
+            endcase
+        end
+    endfunction
 
-   // Accumulator for computing dL_da_prev[j] = sum_i(W[i][j] * dL_dz[i])
-   reg signed [15:0] acc;
+    function [31:0] get_AO;
+        input [3:0] idx;
+        begin
+            case (idx)
+                0: get_AO = AO0; 1: get_AO = AO1; 2: get_AO = AO2; 3: get_AO = AO3;
+                4: get_AO = AO4; 5: get_AO = AO5; 6: get_AO = AO6; 7: get_AO = AO7;
+                default: get_AO = AO8;
+            endcase
+        end
+    endfunction
 
-   always @(posedge clk or posedge rst) begin
-      if (rst) begin
-         state <= IDLE;
-         done <= 0;
-      end else begin
-         case (state)
-           IDLE: begin
-              done <= 0;
-              if (start) begin
-                 layer_idx <= M - 1;
-                 dL_da <= dL_dy;  // start with loss gradient
-                 state <= INIT_DZ;
-              end
-           end
+    // State encoding
+    localparam IDLE        = 4'd0;
+    localparam INIT_DZ     = 4'd1;
+    localparam COMPUTE_DZ  = 4'd2;
+    localparam INIT_DW     = 4'd3;
+    localparam COMPUTE_DW  = 4'd4;
+    localparam INIT_DA     = 4'd5;
+    localparam COMPUTE_DA  = 4'd6;
+    localparam STORE_DA    = 4'd7;
+    localparam NEXT_LAYER  = 4'd8;
+    localparam DONE_STATE  = 4'd9;
 
-           INIT_DZ: begin
-              // Initialize counter for COMPUTE_DZ loop
-              i <= 0;
-              state <= COMPUTE_DZ;
-           end
+    reg [3:0] state;
+    reg [3:0] layer_idx;
 
-           COMPUTE_DZ: begin
-              // dL_dz[i] = dL_da[i] * ReLU'(activation)
-              // ReLU'(x) = 1 if x > 0, else 0
-              // Since activation is post-ReLU, check if act > 0
-              if (act_val > 0) begin
-                 dL_dz[i*16 +: 16] <= dL_da_i;
-              end else begin
-                 dL_dz[i*16 +: 16] <= 16'sd0;
-              end
-              // Also store to dL_db (bias gradient = dL_dz)
-              if (act_val > 0) begin
-                 dL_db[db_idx +: 16] <= dL_da_i;
-              end else begin
-                 dL_db[db_idx +: 16] <= 16'sd0;
-              end
+    // Current layer dimensions (set at start of each layer)
+    reg [15:0] n_out;      // output neurons of current layer
+    reg [15:0] n_in;       // input neurons of current layer
+    reg [31:0] w_offset;   // weight offset for current layer
+    reg [31:0] b_offset;   // bias offset for current layer
+    reg [31:0] act_offset; // activation offset for current layer output
+    reg [31:0] act_in_offset; // activation offset for current layer input
 
-              // Increment or move to next state
-              if (i == N - 1) begin
-                 state <= INIT_DW;
-              end else begin
-                 i <= i + 1;
-              end
-           end
+    // Working registers (sized for max layer)
+    reg signed [(MAX_L*16)-1:0] dL_da;
+    reg signed [(MAX_L*16)-1:0] dL_dz;
+    reg signed [(MAX_L*16)-1:0] dL_da_prev;
 
-           INIT_DW: begin
-              // Initialize counters for nested loop
-              i <= 0;
-              j <= 0;
-              state <= COMPUTE_DW;
-           end
+    // Loop counters
+    reg [15:0] i, j;
 
-           COMPUTE_DW: begin
-              // dL_dW[layer_idx][i][j] = dL_dz[i] * a_prev[j]
-              // Outer product: N×N operations
-              dL_dw[dw_idx +: 16] <= mult_q8_8;
+    // Element access
+    wire signed [15:0] act_val;
+    assign act_val = activations[(act_offset + i) * 16 +: 16];
 
-              // Nested loop: iterate j, then i
-              if (j == N - 1) begin
-                 j <= 0;
-                 if (i == N - 1) begin
-                    state <= INIT_DA;
-                 end else begin
-                    i <= i + 1;
-                 end
-              end else begin
-                 j <= j + 1;
-              end
-           end
+    wire signed [15:0] dL_da_i;
+    assign dL_da_i = dL_da[i*16 +: 16];
 
-           INIT_DA: begin
-              // Initialize for dL_da_prev computation
-              // Outer loop over j (output index), inner loop over i (sum index)
-              i <= 0;
-              j <= 0;
-              acc <= 16'sd0;
-              dL_da_prev <= 0;
-              state <= COMPUTE_DA;
-           end
+    wire signed [15:0] dL_dz_i;
+    assign dL_dz_i = dL_dz[i*16 +: 16];
 
-           COMPUTE_DA: begin
-              // dL_da_prev[j] = sum_i(W[i][j] * dL_dz[i])
-              // Accumulate W[i][j] * dL_dz[i] for current i
-              acc <= acc + mult_da_q8_8;
+    wire signed [15:0] a_prev_j;
+    assign a_prev_j = activations[(act_in_offset + j) * 16 +: 16];
 
-              // Inner loop over i
-              if (i == N - 1) begin
-                 // Done summing for this j, go store result
-                 state <= STORE_DA;
-              end else begin
-                 i <= i + 1;
-              end
-           end
+    wire signed [15:0] w_ij;
+    assign w_ij = w[(w_offset + i * n_in + j) * 16 +: 16];
 
-           STORE_DA: begin
-              // Store accumulated result to dL_da_prev[j]
-              dL_da_prev[j*16 +: 16] <= acc;
+    // Multipliers
+    wire signed [31:0] mult_dw;
+    assign mult_dw = dL_dz_i * a_prev_j;
 
-              // Move to next j or finish
-              if (j == N - 1) begin
-                 state <= NEXT_LAYER;
-              end else begin
-                 j <= j + 1;
-                 i <= 0;
-                 acc <= 16'sd0;
-                 state <= COMPUTE_DA;
-              end
-           end
+    wire signed [31:0] mult_da;
+    assign mult_da = w_ij * dL_dz_i;
 
-           NEXT_LAYER: begin
-              dL_da <= dL_da_prev;  // pass gradient backward
-              if (layer_idx == 0) begin
-                 state <= DONE_STATE;
-              end else begin
-                 layer_idx <= layer_idx - 1;
-                 state <= INIT_DZ;  // reinitialize counter for next layer
-              end
-           end
+    // Accumulator
+    reg signed [15:0] acc;
 
-           DONE_STATE: begin
-              done <= 1;
-              state <= IDLE;
-           end
-         endcase
-      end
-   end
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            state <= IDLE;
+            done <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    done <= 0;
+                    if (start) begin
+                        layer_idx <= NUM_LAYERS - 1;
+                        dL_da[(L_OUT*16)-1:0] <= dL_dy;
+                        state <= INIT_DZ;
+                    end
+                end
+
+                INIT_DZ: begin
+                    // Set dimensions for current layer
+                    n_out <= get_L(layer_idx + 1);
+                    n_in <= get_L(layer_idx);
+                    w_offset <= get_WO(layer_idx);
+                    b_offset <= get_BO(layer_idx);
+                    act_offset <= get_AO(layer_idx + 1);
+                    act_in_offset <= get_AO(layer_idx);
+                    i <= 0;
+                    state <= COMPUTE_DZ;
+                end
+
+                COMPUTE_DZ: begin
+                    // dL_dz[i] = dL_da[i] * ReLU'(activation)
+                    if (act_val > 0) begin
+                        dL_dz[i*16 +: 16] <= dL_da_i;
+                        dL_db[(b_offset + i) * 16 +: 16] <= dL_da_i;
+                    end else begin
+                        dL_dz[i*16 +: 16] <= 16'sd0;
+                        dL_db[(b_offset + i) * 16 +: 16] <= 16'sd0;
+                    end
+
+                    if (i == n_out - 1) begin
+                        state <= INIT_DW;
+                    end else begin
+                        i <= i + 1;
+                    end
+                end
+
+                INIT_DW: begin
+                    i <= 0;
+                    j <= 0;
+                    state <= COMPUTE_DW;
+                end
+
+                COMPUTE_DW: begin
+                    // dL_dW[i][j] = dL_dz[i] * a_prev[j]
+                    dL_dw[(w_offset + i * n_in + j) * 16 +: 16] <= mult_dw[23:8];
+
+                    if (j == n_in - 1) begin
+                        j <= 0;
+                        if (i == n_out - 1) begin
+                            state <= INIT_DA;
+                        end else begin
+                            i <= i + 1;
+                        end
+                    end else begin
+                        j <= j + 1;
+                    end
+                end
+
+                INIT_DA: begin
+                    i <= 0;
+                    j <= 0;
+                    acc <= 16'sd0;
+                    dL_da_prev <= 0;
+                    state <= COMPUTE_DA;
+                end
+
+                COMPUTE_DA: begin
+                    // dL_da_prev[j] = sum_i(W[i][j] * dL_dz[i])
+                    acc <= acc + mult_da[23:8];
+
+                    if (i == n_out - 1) begin
+                        state <= STORE_DA;
+                    end else begin
+                        i <= i + 1;
+                    end
+                end
+
+                STORE_DA: begin
+                    dL_da_prev[j*16 +: 16] <= acc;
+
+                    if (j == n_in - 1) begin
+                        state <= NEXT_LAYER;
+                    end else begin
+                        j <= j + 1;
+                        i <= 0;
+                        acc <= 16'sd0;
+                        state <= COMPUTE_DA;
+                    end
+                end
+
+                NEXT_LAYER: begin
+                    dL_da <= dL_da_prev;
+                    if (layer_idx == 0) begin
+                        state <= DONE_STATE;
+                    end else begin
+                        layer_idx <= layer_idx - 1;
+                        state <= INIT_DZ;
+                    end
+                end
+
+                DONE_STATE: begin
+                    done <= 1;
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
 
 endmodule

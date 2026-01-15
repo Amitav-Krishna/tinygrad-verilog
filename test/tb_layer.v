@@ -10,8 +10,8 @@ module tb_layer;
   wire done;
 
   layer #(
-    .N(2),
-    .M(2)
+    .N_IN(2),
+    .N_OUT(2)
    ) uut (
     .clk(clk),
     .start(start),

@@ -1,7 +1,15 @@
 module tb_sgd;
-   // Parameters
-   localparam N = 2;
-   localparam M = 2;
+   // Network configuration: 2->2->2 (same as before)
+   localparam NUM_LAYERS = 2;
+   localparam [143:0] LAYER_SIZES = {16'd0, 16'd0, 16'd0, 16'd0, 16'd0, 16'd0, 16'd2, 16'd2, 16'd2};
+
+   // Derived parameters
+   localparam L0 = 2;
+   localparam L1 = 2;
+   localparam L2 = 2;
+   localparam TOTAL_WEIGHTS = L1*L0 + L2*L1;  // 4 + 4 = 8
+   localparam TOTAL_BIASES = L1 + L2;          // 2 + 2 = 4
+   localparam TOTAL_ACTS = L0 + L1 + L2;       // 2 + 2 + 2 = 6
 
    // Clock and control
    reg clk;
@@ -10,35 +18,35 @@ module tb_sgd;
    reg start_bwd;
 
    // Network inputs
-   reg signed [(N*16)-1:0] x_vals;
-   reg signed [((M*(N*N))*16)-1:0] w_vals;
-   reg signed [((N*M)*16)-1:0] b_vals;
+   reg signed [(L0*16)-1:0] x_vals;
+   reg signed [(TOTAL_WEIGHTS*16)-1:0] w_vals;
+   reg signed [(TOTAL_BIASES*16)-1:0] b_vals;
 
    // Network outputs
-   wire signed [(N*16)-1:0] y_vals;
-   wire signed [(((M+1)*N)*16)-1:0] activations;
+   wire signed [(L2*16)-1:0] y_vals;
+   wire signed [(TOTAL_ACTS*16)-1:0] activations;
    wire fwd_done;
 
    // Target for loss computation
-   reg signed [(N*16)-1:0] target;
+   reg signed [(L2*16)-1:0] target;
 
    // Loss gradient: dL/dy = y - target for MSE
-   reg signed [(N*16)-1:0] dL_dy;
+   reg signed [(L2*16)-1:0] dL_dy;
 
    // Backward outputs
-   wire signed [((M*(N*N))*16)-1:0] dL_dw;
-   wire signed [((N*M)*16)-1:0] dL_db;
+   wire signed [(TOTAL_WEIGHTS*16)-1:0] dL_dw;
+   wire signed [(TOTAL_BIASES*16)-1:0] dL_db;
    wire bwd_done;
 
    // SGD inputs/outputs
    reg signed [15:0] lr;
-   wire signed [((M*(N*N))*16)-1:0] w_new;
-   wire signed [((N*M)*16)-1:0] b_new;
+   wire signed [(TOTAL_WEIGHTS*16)-1:0] w_new;
+   wire signed [(TOTAL_BIASES*16)-1:0] b_new;
 
    // Instantiate network (forward pass)
    network #(
-      .N(N),
-      .M(M)
+      .NUM_LAYERS(NUM_LAYERS),
+      .LAYER_SIZES(LAYER_SIZES)
    ) net (
       .clk(clk),
       .start(start_fwd),
@@ -52,8 +60,8 @@ module tb_sgd;
 
    // Instantiate backward pass
    backward #(
-      .N(N),
-      .M(M)
+      .NUM_LAYERS(NUM_LAYERS),
+      .LAYER_SIZES(LAYER_SIZES)
    ) bwd (
       .clk(clk),
       .rst(rst),
@@ -68,8 +76,8 @@ module tb_sgd;
 
    // Instantiate SGD optimizer
    sgd #(
-      .N(N),
-      .M(M)
+      .NUM_LAYERS(NUM_LAYERS),
+      .LAYER_SIZES(LAYER_SIZES)
    ) optimizer (
       .w(w_vals),
       .b(b_vals),
@@ -101,52 +109,13 @@ module tb_sgd;
    // Helper to display a vector
    task display_vector;
       input [8*20:1] name;
-      input signed [(N*16)-1:0] vec;
+      input signed [(L0*16)-1:0] vec;
       integer idx;
       begin
          $write("%s: [", name);
-         for (idx = 0; idx < N; idx = idx + 1) begin
+         for (idx = 0; idx < L0; idx = idx + 1) begin
             $write("%.4f", q8_to_real(vec[idx*16 +: 16]));
-            if (idx < N-1) $write(", ");
-         end
-         $display("]");
-      end
-   endtask
-
-   // Helper to display weights for one layer
-   task display_weights;
-      input [8*10:1] name;
-      input signed [((M*(N*N))*16)-1:0] weights;
-      input integer layer;
-      integer row, col;
-      integer base;
-      begin
-         $display("  %s[%0d]:", name, layer);
-         base = layer * N * N * 16;
-         for (row = 0; row < N; row = row + 1) begin
-            $write("    [");
-            for (col = 0; col < N; col = col + 1) begin
-               $write("%.4f", q8_to_real(weights[base + (row*N + col)*16 +: 16]));
-               if (col < N-1) $write(", ");
-            end
-            $display("]");
-         end
-      end
-   endtask
-
-   // Helper to display biases for one layer
-   task display_biases;
-      input [8*10:1] name;
-      input signed [((N*M)*16)-1:0] biases;
-      input integer layer;
-      integer idx;
-      integer base;
-      begin
-         base = layer * N * 16;
-         $write("  %s[%0d]: [", name, layer);
-         for (idx = 0; idx < N; idx = idx + 1) begin
-            $write("%.4f", q8_to_real(biases[base + idx*16 +: 16]));
-            if (idx < N-1) $write(", ");
+            if (idx < L0-1) $write(", ");
          end
          $display("]");
       end
@@ -154,14 +123,14 @@ module tb_sgd;
 
    // Compute MSE loss
    function real compute_mse;
-      input signed [(N*16)-1:0] y;
-      input signed [(N*16)-1:0] t;
+      input signed [(L2*16)-1:0] y;
+      input signed [(L2*16)-1:0] t;
       real sum;
       real diff;
       integer idx;
       begin
          sum = 0.0;
-         for (idx = 0; idx < N; idx = idx + 1) begin
+         for (idx = 0; idx < L2; idx = idx + 1) begin
             diff = q8_to_real(y[idx*16 +: 16]) - q8_to_real(t[idx*16 +: 16]);
             sum = sum + diff * diff;
          end
@@ -169,7 +138,6 @@ module tb_sgd;
       end
    endfunction
 
-   integer layer_idx;
    real loss_before, loss_after;
 
    initial begin
@@ -191,24 +159,24 @@ module tb_sgd;
          real_to_q8(2.0)    // x[0]
       };
 
-      // Set weights
+      // Set weights (8 total)
       w_vals = {
-         // Layer 1: W[1]
-         real_to_q8(0.2), real_to_q8(0.5),   // row 1
-         real_to_q8(0.3), real_to_q8(0.4),   // row 0
-         // Layer 0: W[0]
-         real_to_q8(0.8), real_to_q8(0.1),   // row 1
-         real_to_q8(0.7), real_to_q8(0.9)    // row 0
+         // Layer 1 weights
+         real_to_q8(0.2), real_to_q8(0.5),
+         real_to_q8(0.3), real_to_q8(0.4),
+         // Layer 0 weights
+         real_to_q8(0.8), real_to_q8(0.1),
+         real_to_q8(0.7), real_to_q8(0.9)
       };
 
-      // Set biases
+      // Set biases (4 total)
       b_vals = {
-         // Layer 1: b[1]
-         real_to_q8(0.5),   // b[1][1]
-         real_to_q8(1.0),   // b[1][0]
-         // Layer 0: b[0]
-         real_to_q8(0.6),   // b[0][1]
-         real_to_q8(1.2)    // b[0][0]
+         // Layer 1 biases
+         real_to_q8(0.5),
+         real_to_q8(1.0),
+         // Layer 0 biases
+         real_to_q8(0.6),
+         real_to_q8(1.2)
       };
 
       // Set target values
@@ -225,15 +193,6 @@ module tb_sgd;
       // ========== INITIAL PARAMETERS ==========
       $display("--- Initial Parameters ---");
       $display("Learning rate: %.4f", q8_to_real(lr));
-      $display("");
-      $display("Weights:");
-      for (layer_idx = 0; layer_idx < M; layer_idx = layer_idx + 1) begin
-         display_weights("W", w_vals, layer_idx);
-      end
-      $display("Biases:");
-      for (layer_idx = 0; layer_idx < M; layer_idx = layer_idx + 1) begin
-         display_biases("b", b_vals, layer_idx);
-      end
       $display("");
 
       // ========== FORWARD PASS ==========
@@ -278,16 +237,6 @@ module tb_sgd;
 
       // SGD is combinational, results are already available
       #10;
-
-      $display("Updated Weights:");
-      for (layer_idx = 0; layer_idx < M; layer_idx = layer_idx + 1) begin
-         display_weights("W_new", w_new, layer_idx);
-      end
-      $display("Updated Biases:");
-      for (layer_idx = 0; layer_idx < M; layer_idx = layer_idx + 1) begin
-         display_biases("b_new", b_new, layer_idx);
-      end
-      $display("");
 
       // ========== APPLY UPDATED PARAMETERS ==========
       w_vals = w_new;

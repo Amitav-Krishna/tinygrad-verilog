@@ -1,7 +1,15 @@
 module tb_backward;
-   // Parameters
-   localparam N = 2;
-   localparam M = 2;
+   // Network configuration: 2->2->2 (same as before)
+   localparam NUM_LAYERS = 2;
+   localparam [143:0] LAYER_SIZES = {16'd0, 16'd0, 16'd0, 16'd0, 16'd0, 16'd0, 16'd2, 16'd2, 16'd2};
+
+   // Derived parameters
+   localparam L0 = 2;
+   localparam L1 = 2;
+   localparam L2 = 2;
+   localparam TOTAL_WEIGHTS = L1*L0 + L2*L1;  // 4 + 4 = 8
+   localparam TOTAL_BIASES = L1 + L2;          // 2 + 2 = 4
+   localparam TOTAL_ACTS = L0 + L1 + L2;       // 2 + 2 + 2 = 6
 
    // Clock and control
    reg clk;
@@ -10,30 +18,30 @@ module tb_backward;
    reg start_bwd;
 
    // Network inputs
-   reg signed [(N*16)-1:0] x_vals;
-   reg signed [((M*(N*N))*16)-1:0] w_vals;
-   reg signed [((N*M)*16)-1:0] b_vals;
+   reg signed [(L0*16)-1:0] x_vals;
+   reg signed [(TOTAL_WEIGHTS*16)-1:0] w_vals;
+   reg signed [(TOTAL_BIASES*16)-1:0] b_vals;
 
    // Network outputs
-   wire signed [(N*16)-1:0] y_vals;
-   wire signed [(((M+1)*N)*16)-1:0] activations;
+   wire signed [(L2*16)-1:0] y_vals;
+   wire signed [(TOTAL_ACTS*16)-1:0] activations;
    wire fwd_done;
 
    // Target for loss computation
-   reg signed [(N*16)-1:0] target;
+   reg signed [(L2*16)-1:0] target;
 
    // Loss gradient: dL/dy = 2 * (y - target) for MSE
-   reg signed [(N*16)-1:0] dL_dy;
+   reg signed [(L2*16)-1:0] dL_dy;
 
    // Backward outputs
-   wire signed [((M*(N*N))*16)-1:0] dL_dw;
-   wire signed [((N*M)*16)-1:0] dL_db;
+   wire signed [(TOTAL_WEIGHTS*16)-1:0] dL_dw;
+   wire signed [(TOTAL_BIASES*16)-1:0] dL_db;
    wire bwd_done;
 
    // Instantiate network (forward pass)
    network #(
-      .N(N),
-      .M(M)
+      .NUM_LAYERS(NUM_LAYERS),
+      .LAYER_SIZES(LAYER_SIZES)
    ) net (
       .clk(clk),
       .start(start_fwd),
@@ -47,8 +55,8 @@ module tb_backward;
 
    // Instantiate backward pass
    backward #(
-      .N(N),
-      .M(M)
+      .NUM_LAYERS(NUM_LAYERS),
+      .LAYER_SIZES(LAYER_SIZES)
    ) bwd (
       .clk(clk),
       .rst(rst),
@@ -82,48 +90,13 @@ module tb_backward;
    // Helper to display a vector
    task display_vector;
       input [8*20:1] name;
-      input signed [(N*16)-1:0] vec;
+      input signed [(L0*16)-1:0] vec;
       integer idx;
       begin
          $write("%s: [", name);
-         for (idx = 0; idx < N; idx = idx + 1) begin
+         for (idx = 0; idx < L0; idx = idx + 1) begin
             $write("%.4f", q8_to_real(vec[idx*16 +: 16]));
-            if (idx < N-1) $write(", ");
-         end
-         $display("]");
-      end
-   endtask
-
-   // Helper to display weight gradients for one layer
-   task display_weight_grad;
-      input integer layer;
-      integer row, col;
-      integer base;
-      begin
-         $display("  dL_dW[%0d]:", layer);
-         base = layer * N * N * 16;
-         for (row = 0; row < N; row = row + 1) begin
-            $write("    [");
-            for (col = 0; col < N; col = col + 1) begin
-               $write("%.4f", q8_to_real(dL_dw[base + (row*N + col)*16 +: 16]));
-               if (col < N-1) $write(", ");
-            end
-            $display("]");
-         end
-      end
-   endtask
-
-   // Helper to display bias gradients for one layer
-   task display_bias_grad;
-      input integer layer;
-      integer idx;
-      integer base;
-      begin
-         base = layer * N * 16;
-         $write("  dL_db[%0d]: [", layer);
-         for (idx = 0; idx < N; idx = idx + 1) begin
-            $write("%.4f", q8_to_real(dL_db[base + idx*16 +: 16]));
-            if (idx < N-1) $write(", ");
+            if (idx < L0-1) $write(", ");
          end
          $display("]");
       end
@@ -147,25 +120,26 @@ module tb_backward;
          real_to_q8(2.0)    // x[0]
       };
 
-      // Set weights (same as tb_network)
-      // Layer 0 weights, then Layer 1 weights
+      // Set weights (8 total: layer0 has 4, layer1 has 4)
+      // Layer 0: 2 neurons x 2 inputs = 4 weights
+      // Layer 1: 2 neurons x 2 inputs = 4 weights
       w_vals = {
-         // Layer 1: W[1]
-         real_to_q8(0.2), real_to_q8(0.5),   // row 1
-         real_to_q8(0.3), real_to_q8(0.4),   // row 0
-         // Layer 0: W[0]
-         real_to_q8(0.8), real_to_q8(0.1),   // row 1
-         real_to_q8(0.7), real_to_q8(0.9)    // row 0
+         // Layer 1 weights (indices 4-7)
+         real_to_q8(0.2), real_to_q8(0.5),   // n1: w10, w11
+         real_to_q8(0.3), real_to_q8(0.4),   // n0: w00, w01
+         // Layer 0 weights (indices 0-3)
+         real_to_q8(0.8), real_to_q8(0.1),   // n1: w10, w11
+         real_to_q8(0.7), real_to_q8(0.9)    // n0: w00, w01
       };
 
-      // Set biases
+      // Set biases (4 total: layer0 has 2, layer1 has 2)
       b_vals = {
-         // Layer 1: b[1]
-         real_to_q8(0.5),   // b[1][1]
-         real_to_q8(1.0),   // b[1][0]
-         // Layer 0: b[0]
-         real_to_q8(0.6),   // b[0][1]
-         real_to_q8(1.2)    // b[0][0]
+         // Layer 1 biases
+         real_to_q8(0.5),   // b[1]
+         real_to_q8(1.0),   // b[0]
+         // Layer 0 biases
+         real_to_q8(0.6),   // b[1]
+         real_to_q8(1.2)    // b[0]
       };
 
       // Set target values
@@ -236,17 +210,37 @@ module tb_backward;
       $display("");
 
       // Display weight gradients
-      $display("Weight gradients:");
-      for (layer_idx = 0; layer_idx < M; layer_idx = layer_idx + 1) begin
-         display_weight_grad(layer_idx);
-      end
+      $display("Weight gradients (dL_dw):");
+      $display("  Layer 0:");
+      $write("    [");
+      $write("%.4f, ", q8_to_real(dL_dw[0*16 +: 16]));
+      $write("%.4f", q8_to_real(dL_dw[1*16 +: 16]));
+      $display("]");
+      $write("    [");
+      $write("%.4f, ", q8_to_real(dL_dw[2*16 +: 16]));
+      $write("%.4f", q8_to_real(dL_dw[3*16 +: 16]));
+      $display("]");
+      $display("  Layer 1:");
+      $write("    [");
+      $write("%.4f, ", q8_to_real(dL_dw[4*16 +: 16]));
+      $write("%.4f", q8_to_real(dL_dw[5*16 +: 16]));
+      $display("]");
+      $write("    [");
+      $write("%.4f, ", q8_to_real(dL_dw[6*16 +: 16]));
+      $write("%.4f", q8_to_real(dL_dw[7*16 +: 16]));
+      $display("]");
       $display("");
 
       // Display bias gradients
-      $display("Bias gradients:");
-      for (layer_idx = 0; layer_idx < M; layer_idx = layer_idx + 1) begin
-         display_bias_grad(layer_idx);
-      end
+      $display("Bias gradients (dL_db):");
+      $write("  Layer 0: [");
+      $write("%.4f, ", q8_to_real(dL_db[0*16 +: 16]));
+      $write("%.4f", q8_to_real(dL_db[1*16 +: 16]));
+      $display("]");
+      $write("  Layer 1: [");
+      $write("%.4f, ", q8_to_real(dL_db[2*16 +: 16]));
+      $write("%.4f", q8_to_real(dL_db[3*16 +: 16]));
+      $display("]");
       $display("");
 
       $display("=== Test Complete ===");
