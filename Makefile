@@ -25,6 +25,10 @@ test_mul: $(BUILD)
 	$(IVERILOG) -o $(BUILD)/mul.vvp $(SRC)/fixed_mul.v $(TEST)/tb_fixed_mul.v
 	$(VVP) $(BUILD)/mul.vvp
 
+test_mse: $(BUILD)
+	$(IVERILOG) -o $(BUILD)/mse.vvp $(SRC)/mse.v $(TEST)/tb_mse.v
+	$(VVP) $(BUILD)/mse.vvp
+
 # Test MAC
 test_mac: $(BUILD)
 	$(IVERILOG) -o $(BUILD)/mac.vvp $(SRC)/fixed_mul.v $(SRC)/mac.v $(TEST)/tb_mac.v
@@ -50,6 +54,16 @@ test_layer: $(BUILD)
 test_network: $(BUILD)
 	$(IVERILOG) -o $(BUILD)/network.vvp $(SRC)/*.v $(TEST)/tb_network.v
 	$(VVP) $(BUILD)/network.vvp
+
+# Test backward pass
+test_backward: $(BUILD)
+	$(IVERILOG) -o $(BUILD)/backward.vvp $(SRC)/*.v $(TEST)/tb_backward.v
+	$(VVP) $(BUILD)/backward.vvp
+
+# Test SGD optimizer
+test_sgd: $(BUILD)
+	$(IVERILOG) -o $(BUILD)/sgd.vvp $(SRC)/*.v $(TEST)/tb_sgd.v
+	$(VVP) $(BUILD)/sgd.vvp
 
 # Clean build artifacts
 clean:
