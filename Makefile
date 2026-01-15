@@ -65,8 +65,13 @@ test_sgd: $(BUILD)
 	$(IVERILOG) -o $(BUILD)/sgd.vvp $(SRC)/*.v $(TEST)/tb_sgd.v
 	$(VVP) $(BUILD)/sgd.vvp
 
+# Test XOR learning
+test_xor: $(BUILD)
+	$(IVERILOG) -o $(BUILD)/xor.vvp $(SRC)/*.v $(TEST)/tb_xor.v
+	$(VVP) $(BUILD)/xor.vvp
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: test_adder test_mul test_mac test_relu test_neuron test_network clean
+.PHONY: test_adder test_mul test_mac test_relu test_neuron test_network test_backward test_sgd test_xor clean

@@ -63,8 +63,9 @@ module sgd #(
     generate
         for (i = 0; i < TOTAL_PARAMS; i = i + 1) begin : param_update
             wire signed [31:0] scaled_grad;
-            assign scaled_grad = lr * grads[i*16 +: 16];
-            assign params_new[i*16 +: 16] = params[i*16 +: 16] - scaled_grad[23:8];
+            // Cast part-selects to signed (part-selects lose signedness)
+            assign scaled_grad = $signed(lr) * $signed(grads[i*16 +: 16]);
+            assign params_new[i*16 +: 16] = $signed(params[i*16 +: 16]) - scaled_grad[23:8];
         end
     endgenerate
 
