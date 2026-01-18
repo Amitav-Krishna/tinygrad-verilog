@@ -18,6 +18,9 @@ class VerilogRenderer(Renderer):
 
   def render(self, uops: list[UOp]) -> str:
     """Convert UOps to Verilog code."""
+    # O(n) - build UOp->index mapping once for O(1) lookups
+    uop_to_idx = {id(u): i for i, u in enumerate(uops)}
+
     # Track buffers: arg -> (name, size)
     buffers: dict[int, tuple[str, int]] = {}
     # Track variable names for each UOp index
@@ -36,7 +39,7 @@ class VerilogRenderer(Renderer):
       elif u.op is Ops.SPECIAL:
         # Index variable (lidx0, gidx0, etc.)
         var_name = u.arg
-        bound_idx = uops.index(u.src[0])
+        bound_idx = uop_to_idx[id(u.src[0])]
         if uops[bound_idx].op is Ops.CONST:
           index_vars[var_name] = uops[bound_idx].arg
           if loop_bound == 1:  # Use the first one we find
@@ -93,20 +96,20 @@ class VerilogRenderer(Renderer):
 
       elif u.op is Ops.INDEX:
         # Array indexing: buf[idx]
-        buf_idx = uops.index(u.src[0])
-        idx_idx = uops.index(u.src[1])
+        buf_idx = uop_to_idx[id(u.src[0])]
+        idx_idx = uop_to_idx[id(u.src[1])]
         buf_name = var_names.get(buf_idx, "buf0")
         idx_name = var_names.get(idx_idx, "0")
         var_names[i] = f"{buf_name}[{idx_name}]"
 
       elif u.op is Ops.LOAD:
         # Load just references the indexed location
-        src_idx = uops.index(u.src[0])
+        src_idx = uop_to_idx[id(u.src[0])]
         var_names[i] = var_names.get(src_idx, "0")
 
       elif u.op is Ops.STORE:
-        dest_idx = uops.index(u.src[0])
-        val_idx = uops.index(u.src[1])
+        dest_idx = uop_to_idx[id(u.src[0])]
+        val_idx = uop_to_idx[id(u.src[1])]
         val_uop = uops[val_idx]
 
         if val_uop.op is Ops.VECTORIZE:
@@ -115,7 +118,7 @@ class VerilogRenderer(Renderer):
           if '[' in dest_base:
             base_name = dest_base.split('[')[0]
             for j, src in enumerate(val_uop.src):
-              elem_idx = uops.index(src)
+              elem_idx = uop_to_idx[id(src)]
               elem_val = var_names.get(elem_idx, "0")
               lines.append(f"      {base_name}[{j}] = {elem_val};")
           else:
@@ -126,44 +129,44 @@ class VerilogRenderer(Renderer):
           lines.append(f"      {dest} = {val};")
 
       elif u.op is Ops.ADD:
-        a_idx = uops.index(u.src[0])
-        b_idx = uops.index(u.src[1])
+        a_idx = uop_to_idx[id(u.src[0])]
+        b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
         var_names[i] = f"({a} + {b})"
 
       elif u.op is Ops.MUL:
-        a_idx = uops.index(u.src[0])
-        b_idx = uops.index(u.src[1])
+        a_idx = uop_to_idx[id(u.src[0])]
+        b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
         var_names[i] = f"({a} * {b})"
 
       elif u.op is Ops.SUB:
-        a_idx = uops.index(u.src[0])
-        b_idx = uops.index(u.src[1])
+        a_idx = uop_to_idx[id(u.src[0])]
+        b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
         var_names[i] = f"({a} - {b})"
 
       elif u.op is Ops.MAX:
-        a_idx = uops.index(u.src[0])
-        b_idx = uops.index(u.src[1])
+        a_idx = uop_to_idx[id(u.src[0])]
+        b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
         var_names[i] = f"(({a} > {b}) ? {a} : {b})"
 
       elif u.op is Ops.CMPLT:
-        a_idx = uops.index(u.src[0])
-        b_idx = uops.index(u.src[1])
+        a_idx = uop_to_idx[id(u.src[0])]
+        b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
         var_names[i] = f"({a} < {b})"
 
       elif u.op is Ops.WHERE:
-        cond_idx = uops.index(u.src[0])
-        a_idx = uops.index(u.src[1])
-        b_idx = uops.index(u.src[2])
+        cond_idx = uop_to_idx[id(u.src[0])]
+        a_idx = uop_to_idx[id(u.src[1])]
+        b_idx = uop_to_idx[id(u.src[2])]
         cond = var_names.get(cond_idx, "0")
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
@@ -171,12 +174,12 @@ class VerilogRenderer(Renderer):
 
       elif u.op is Ops.CAST:
         # Type cast - for now just pass through
-        src_idx = uops.index(u.src[0])
+        src_idx = uop_to_idx[id(u.src[0])]
         var_names[i] = var_names.get(src_idx, "0")
 
       elif u.op is Ops.GEP:
         # Get Element Pointer - extract element from vector
-        src_idx = uops.index(u.src[0])
+        src_idx = uop_to_idx[id(u.src[0])]
         elem_idx = u.arg[0] if u.arg else 0
         src_name = var_names.get(src_idx, "0")
         # If source is a buffer index, add the element offset
