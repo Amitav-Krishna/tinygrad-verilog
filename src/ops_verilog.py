@@ -25,8 +25,6 @@ class VerilogRenderer(Renderer):
     buffers: dict[int, tuple[str, int]] = {}
     # Track variable names for each UOp index
     var_names: dict[int, str] = {}
-    # Track loop bounds from SPECIAL ops
-    loop_bound = 1
 
     # Track index variables and their bounds
     index_vars: dict[str, int] = {}  # var_name -> bound
@@ -42,8 +40,6 @@ class VerilogRenderer(Renderer):
         bound_idx = uop_to_idx[id(u.src[0])]
         if uops[bound_idx].op is Ops.CONST:
           index_vars[var_name] = uops[bound_idx].arg
-          if loop_bound == 1:  # Use the first one we find
-            loop_bound = uops[bound_idx].arg
 
     # Generate Verilog
     lines = []
@@ -71,16 +67,13 @@ class VerilogRenderer(Renderer):
         lines.append(f"      {name}[_i] = $bitstoreal({name}_bits[_i]);")
 
     lines.append("")
-    # Use the first index variable for the main computation loop
+    # Generate nested loops for all index variables
     # If no index vars (vectorized case), just use a simple block
     if index_vars:
-      main_idx = list(index_vars.keys())[0]
-      main_bound = index_vars[main_idx]
-      lines.append(f"    for ({main_idx} = 0; {main_idx} < {main_bound}; {main_idx} = {main_idx} + 1) begin")
-      use_loop = True
+      for var_name, bound in index_vars.items():
+        lines.append(f"    for ({var_name} = 0; {var_name} < {bound}; {var_name} = {var_name} + 1) begin")
     else:
       lines.append("    begin  // vectorized (no loop)")
-      use_loop = False
 
     # Second pass: generate computation
     for i, u in enumerate(uops):
@@ -198,7 +191,12 @@ class VerilogRenderer(Renderer):
       elif u.op in (Ops.SINK, Ops.NOOP, Ops.BARRIER):
         pass  # No-op
 
-    lines.append("    end")
+    # Close all nested loops (or the single begin block)
+    if index_vars:
+      for _ in index_vars:
+        lines.append("    end")
+    else:
+      lines.append("    end")
     lines.append("")
 
     # Convert output to bits and write
