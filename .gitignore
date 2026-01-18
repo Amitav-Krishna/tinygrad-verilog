@@ -3,4 +3,3 @@ build/
 *.vcd
 tinygrad_testing/
 venv/
-.beads/
