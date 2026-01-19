@@ -4,3 +4,4 @@ build/
 tinygrad_testing/
 venv/
 .beads/
+__pycache__/

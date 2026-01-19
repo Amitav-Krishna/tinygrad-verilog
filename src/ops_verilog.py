@@ -30,6 +30,8 @@ class VerilogRenderer(Renderer):
 
     # Track index variables and their bounds
     index_vars: dict[str, int] = {}  # var_name -> bound
+    # Track temporary variables for TAC
+    temp_vars: set[int] = set()
 
     # First pass: collect buffer definitions and find loop bounds
     for i, u in enumerate(uops):
@@ -60,6 +62,8 @@ class VerilogRenderer(Renderer):
     lines.append("  integer _i;")  # helper for memory read/write loops
     for var_name in index_vars:
       lines.append(f"  integer {var_name};")
+    # Placeholder for temp variable declarations (will be filled after second pass)
+    temp_var_decl_index = len(lines)
     lines.append("")
     lines.append("  initial begin")
 
@@ -133,35 +137,50 @@ class VerilogRenderer(Renderer):
         b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
-        var_names[i] = f"({a} + {b})"
+        temp_var = f"_t{i}"
+        temp_vars.add(i)
+        lines.append(f"      {temp_var} = {a} + {b};")
+        var_names[i] = temp_var
 
       elif u.op is Ops.MUL:
         a_idx = uop_to_idx[id(u.src[0])]
         b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
-        var_names[i] = f"({a} * {b})"
+        temp_var = f"_t{i}"
+        temp_vars.add(i)
+        lines.append(f"      {temp_var} = {a} * {b};")
+        var_names[i] = temp_var
 
       elif u.op is Ops.SUB:
         a_idx = uop_to_idx[id(u.src[0])]
         b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
-        var_names[i] = f"({a} - {b})"
+        temp_var = f"_t{i}"
+        temp_vars.add(i)
+        lines.append(f"      {temp_var} = {a} - {b};")
+        var_names[i] = temp_var
 
       elif u.op is Ops.MAX:
         a_idx = uop_to_idx[id(u.src[0])]
         b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
-        var_names[i] = f"(({a} > {b}) ? {a} : {b})"
+        temp_var = f"_t{i}"
+        temp_vars.add(i)
+        lines.append(f"      {temp_var} = ({a} > {b}) ? {a} : {b};")
+        var_names[i] = temp_var
 
       elif u.op is Ops.CMPLT:
         a_idx = uop_to_idx[id(u.src[0])]
         b_idx = uop_to_idx[id(u.src[1])]
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
-        var_names[i] = f"({a} < {b})"
+        temp_var = f"_t{i}"
+        temp_vars.add(i)
+        lines.append(f"      {temp_var} = {a} < {b};")
+        var_names[i] = temp_var
 
       elif u.op is Ops.WHERE:
         cond_idx = uop_to_idx[id(u.src[0])]
@@ -170,7 +189,10 @@ class VerilogRenderer(Renderer):
         cond = var_names.get(cond_idx, "0")
         a = var_names.get(a_idx, "0")
         b = var_names.get(b_idx, "0")
-        var_names[i] = f"({cond} ? {a} : {b})"
+        temp_var = f"_t{i}"
+        temp_vars.add(i)
+        lines.append(f"      {temp_var} = {cond} ? {a} : {b};")
+        var_names[i] = temp_var
 
       elif u.op is Ops.CAST:
         # Type cast - for now just pass through
@@ -211,6 +233,11 @@ class VerilogRenderer(Renderer):
     lines.append("    $finish;")
     lines.append("  end")
     lines.append("endmodule")
+
+    # Insert temp variable declarations at the placeholder position
+    if temp_vars:
+      temp_decls = [f"  real _t{i};" for i in sorted(temp_vars)]
+      lines[temp_var_decl_index:temp_var_decl_index] = temp_decls
 
     return "\n".join(lines)
 
